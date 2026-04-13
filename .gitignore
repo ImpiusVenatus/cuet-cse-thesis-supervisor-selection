@@ -19,6 +19,7 @@ build/
 # IDE
 .vscode/
 .idea/
+.qwen/
 
 # OS
 .DS_Store
