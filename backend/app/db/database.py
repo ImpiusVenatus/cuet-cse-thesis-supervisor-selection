@@ -1,17 +1,20 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import os
 
-# Create data directory if it doesn't exist
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+from app.core.config import get_settings
 
-DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'thesis.db')}"
+_settings = get_settings()
+DATABASE_URL = _settings.sqlalchemy_database_url
+
+_sqlite_extra = {}
+if DATABASE_URL.startswith("sqlite"):
+    _sqlite_extra["connect_args"] = {"check_same_thread": False}
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Needed for SQLite
+    **_sqlite_extra,
+    pool_pre_ping=True,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
