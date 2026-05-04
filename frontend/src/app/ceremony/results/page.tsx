@@ -16,13 +16,13 @@ export default function ResultsPage() {
 
   const { data: results, isLoading } = useQuery({
     queryKey: ['results'],
-    queryFn: allocationApi.getResults,
+    queryFn: () => allocationApi.getResults(),
     refetchInterval: 3000,
   });
 
   const { data: supervisors } = useQuery({
     queryKey: ['supervisors'],
-    queryFn: supervisorsApi.list,
+    queryFn: () => supervisorsApi.list(),
   });
 
   const undoMutation = useMutation({
@@ -39,9 +39,8 @@ export default function ResultsPage() {
 
   const handleExport = async () => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${API_URL}/api/allocation/export`);
-      const blob = await res.blob();
+      const csv = await allocationApi.exportCsv();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

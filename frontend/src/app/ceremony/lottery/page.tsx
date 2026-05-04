@@ -2,8 +2,16 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { allocationApi, supervisorsApi, Student, Supervisor } from '@/lib/api';
-import { Play, CheckCircle, AlertCircle } from 'lucide-react';
+import {
+  allocationApi,
+  supervisorsApi,
+  Student,
+  Supervisor,
+  sessionApi,
+  SESSION_RESET_PASSWORD,
+} from '@/lib/api';
+import { remainingLotterySlotsDisplay, usesSharedSingleSeat } from '@/lib/supervisorCapacity';
+import { Play, CheckCircle, AlertCircle, Loader2, Wrench } from 'lucide-react';
 
 export default function LotteryPage() {
   const queryClient = useQueryClient();
@@ -18,7 +26,7 @@ export default function LotteryPage() {
 
   const { data: supervisors } = useQuery({
     queryKey: ['supervisors'],
-    queryFn: supervisorsApi.list,
+    queryFn: () => supervisorsApi.list(),
     refetchInterval: 3000,
   });
 
@@ -38,6 +46,20 @@ export default function LotteryPage() {
   const handleRunLottery = () => {
     runLotteryMutation.mutate('auto');
   };
+
+  /** Temporary: full batch reset to setup only — same behavior as Choice page tool. */
+  const devResetSessionMutation = useMutation({
+    mutationFn: () => sessionApi.reset(SESSION_RESET_PASSWORD),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['supervisors'] });
+      setLotteryResults([]);
+      setShowConfirm(false);
+    },
+    onError: (err: Error) => alert(err.message),
+  });
 
   if (queueLoading) {
     return <div className="flex justify-center h-64 items-center text-gray-500">Loading...</div>;
@@ -62,6 +84,28 @@ export default function LotteryPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="mb-4 rounded-xl border border-amber-300/80 bg-amber-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-2 text-sm text-amber-950">
+          <Wrench className="w-5 h-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
+          <span>
+            <strong className="font-semibold">Temporary design tool:</strong>{' '}
+            resets this batch to setup (clears assignments and supervisor usage). Does not start the choice phase — use
+            Session Config when you want to begin again.
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={devResetSessionMutation.isPending || runLotteryMutation.isPending}
+          onClick={() => devResetSessionMutation.mutate()}
+          className="inline-flex items-center gap-2 shrink-0 rounded-lg bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {devResetSessionMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+          ) : null}
+          Reset session
+        </button>
+      </div>
+
       <h2 className="text-2xl font-bold mb-4">Lottery Phase</h2>
 
       {/* Run Lottery Button */}
@@ -136,19 +180,23 @@ export default function LotteryPage() {
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <h3 className="text-lg font-semibold mb-4">Supervisor Lottery Availability</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {supervisors?.filter(s => s.is_available).map((sup: Supervisor) => {
-            const lotteryRemaining = sup.lottery_capacity - sup.lottery_filled;
+          {supervisors?.filter((s) => s.is_available).map((sup: Supervisor) => {
+            const lotteryRemaining = remainingLotterySlotsDisplay(sup);
             return (
               <div key={sup.id} className="p-3 border border-gray-200 rounded-lg">
                 <div className="font-medium">{sup.name}</div>
                 <div className="text-sm text-gray-500">{sup.designation}</div>
                 <div className="mt-2">
                   <span className={`text-sm font-medium ${lotteryRemaining > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {lotteryRemaining} lottery slots remaining
+                    {lotteryRemaining} open slot{lotteryRemaining !== 1 ? 's' : ''} for lottery
                   </span>
                 </div>
                 <div className="text-xs text-gray-400 mt-1">
-                  Choice: {sup.choice_filled}/{sup.choice_capacity} | Lottery: {sup.lottery_filled}/{sup.lottery_capacity}
+                  Choice: {sup.choice_filled}/{sup.choice_capacity} | Lottery: {sup.lottery_filled}/
+                  {sup.lottery_capacity}
+                  {usesSharedSingleSeat(sup) && (
+                    <span className="block text-blue-700 mt-0.5">Shared single seat (fills in either phase)</span>
+                  )}
                 </div>
               </div>
             );
