@@ -9,8 +9,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 1000 * 30, // 30 seconds
-            refetchInterval: 1000 * 5, // Refetch every 5 seconds for real-time feel
+            staleTime: 60 * 1000,
+            // Poll only where needed (ceremony pages set their own refetchInterval).
+            refetchInterval: false,
+            refetchOnWindowFocus: true,
             retry: 2,
           },
         },

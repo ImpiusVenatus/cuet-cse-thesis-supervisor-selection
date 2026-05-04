@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { sessionApi, SessionConfig } from '@/lib/api';
+import { batchesApi, sessionApi } from '@/lib/api';
 import { Play, AlertTriangle } from 'lucide-react';
 
 export default function ConfigPage() {
@@ -14,13 +14,31 @@ export default function ConfigPage() {
 
   const { data: session, isLoading } = useQuery({
     queryKey: ['session'],
-    queryFn: sessionApi.get,
+    queryFn: () => sessionApi.get(),
+  });
+
+  const { data: batches } = useQuery({
+    queryKey: ['batches'],
+    queryFn: batchesApi.list,
+  });
+
+  const setBatchMutation = useMutation({
+    mutationFn: batchesApi.setCurrent,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['supervisors'] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+    },
+    onError: (err: Error) => alert(err.message),
   });
 
   const setupMutation = useMutation({
     mutationFn: sessionApi.setup,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
       alert('Session configured successfully!');
     },
     onError: (err: Error) => alert(err.message),
@@ -59,6 +77,7 @@ export default function ConfigPage() {
       queryClient.invalidateQueries({ queryKey: ['session'] });
       queryClient.invalidateQueries({ queryKey: ['supervisors'] });
       queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
       alert('Session reset successfully!');
       setShowResetConfirm(false);
       setResetPassword('');
@@ -109,6 +128,34 @@ export default function ConfigPage() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
       <h2 className="text-2xl font-bold mb-6">Session Configuration</h2>
+
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <h3 className="text-lg font-semibold mb-2">Working cohort (batch)</h3>
+        <p className="text-sm text-gray-500 mb-3">
+          Imports, supervisor slot counts, and the ceremony all apply to this batch only. Batch switching is blocked
+          while another cohort is mid–choice/lottery.
+        </p>
+        <div className="flex flex-wrap gap-3 items-center">
+          <select
+            className="border border-gray-300 rounded-md px-3 py-2 min-w-[220px]"
+            value={session?.batch_id ?? ''}
+            disabled={!batches?.length || setBatchMutation.isPending}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              if (id) setBatchMutation.mutate(id);
+            }}
+          >
+            {batches?.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+          <a href="/setup/batches" className="text-sm text-blue-600 hover:underline">
+            Manage batches
+          </a>
+        </div>
+      </div>
 
       {/* Current Session Info */}
       <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
@@ -172,6 +219,30 @@ export default function ConfigPage() {
           >
             <Play className="w-4 h-4 inline mr-1" /> Configure &amp; Save
           </button>
+
+          <div className="mt-8 pt-6 border-t border-gray-200">
+            <h4 className="text-md font-semibold mb-2">Begin ceremony</h4>
+            <p className="text-sm text-gray-500 mb-3">
+              After saving configuration, start the choice phase so students with choice privilege pick supervisors in merit order.
+            </p>
+            <button
+              type="button"
+              onClick={() => startChoiceMutation.mutate()}
+              disabled={
+                startChoiceMutation.isPending ||
+                !session ||
+                session.total_students < 1
+              }
+              className="text-white px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Play className="w-4 h-4 inline mr-1" /> Start Choice Phase
+            </button>
+            {session && session.total_students < 1 && (
+              <p className="text-xs text-amber-600 mt-2">
+                Save session configuration first (total students must be at least 1).
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -204,8 +275,8 @@ export default function ConfigPage() {
         ) : (
           <div>
             <p className="text-sm text-gray-600 mb-3">
-              This will clear all student assignments and reset supervisor counters.
-              Enter the reset password to confirm.
+              This clears assignments for the working batch, resets that batch&apos;s per-supervisor slot usage, and clears
+              all students linked to this batch (session returns to setup). Enter the reset password to confirm.
             </p>
             <div className="flex gap-2">
               <input

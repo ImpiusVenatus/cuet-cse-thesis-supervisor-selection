@@ -27,8 +27,10 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
+      {/* Extensions often inject attributes on <body> before hydrate; suppress avoids false-positive warnings */}
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <QueryProvider>
           <header className="bg-white border-b border-gray-200 px-6 py-4">
             <div className="max-w-7xl mx-auto">
@@ -42,6 +44,7 @@ export default function RootLayout({
               <a href="/dashboard" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Dashboard</a>
               <a href="/setup/supervisors" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Supervisors</a>
               <a href="/setup/students" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Students</a>
+              <a href="/setup/batches" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Batches</a>
               <a href="/setup/config" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Config</a>
               <a href="/ceremony/choice" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Choice</a>
               <a href="/ceremony/lottery" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Lottery</a>

@@ -18,12 +18,11 @@ export default function StudentsPage() {
     name: '',
     merit_rank: 1,
     email: '',
-    has_choice_privilege: false,
   });
 
   const { data: students, isLoading } = useQuery({
     queryKey: ['students'],
-    queryFn: studentsApi.list,
+    queryFn: () => studentsApi.list(),
   });
 
   const createMutation = useMutation({
@@ -38,8 +37,13 @@ export default function StudentsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Student> }) =>
-      studentsApi.update(id, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: Partial<Pick<Student, 'name' | 'merit_rank' | 'email'>>;
+    }) => studentsApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['students'] });
       resetForm();
@@ -73,7 +77,7 @@ export default function StudentsPage() {
   });
 
   const resetForm = () => {
-    setFormData({ student_id: '', name: '', merit_rank: 1, email: '', has_choice_privilege: false });
+    setFormData({ student_id: '', name: '', merit_rank: 1, email: '' });
     setShowForm(false);
     setEditingId(null);
   };
@@ -81,9 +85,21 @@ export default function StudentsPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (editingId) {
-      updateMutation.mutate({ id: editingId, data: formData });
+      updateMutation.mutate({
+        id: editingId,
+        data: {
+          name: formData.name,
+          merit_rank: formData.merit_rank,
+          email: formData.email || null,
+        },
+      });
     } else {
-      createMutation.mutate(formData as any);
+      createMutation.mutate({
+        student_id: formData.student_id,
+        name: formData.name,
+        merit_rank: formData.merit_rank,
+        email: formData.email || null,
+      });
     }
   };
 
@@ -93,7 +109,6 @@ export default function StudentsPage() {
       name: student.name,
       merit_rank: student.merit_rank,
       email: student.email || '',
-      has_choice_privilege: student.has_choice_privilege,
     });
     setEditingId(student.id);
     setShowForm(true);
@@ -114,9 +129,8 @@ export default function StudentsPage() {
     const data = parsed.data.map((row: any) => ({
       student_id: row.student_id || row['Student ID'] || '',
       name: row.name || row.Name || row['Student Name'] || '',
-      merit_rank: parseInt(row.merit_rank || row['Merit Rank'] || row['merit_rank'] || '0'),
-      email: row.email || row.Email || '',
-      has_choice_privilege: (row.has_choice_privilege || row['Has Choice Privilege'] || '').toLowerCase() === 'true',
+      merit_rank: parseInt(row.merit_rank || row['Merit Rank'] || row['merit_rank'] || '0', 10),
+      email: (String(row.email || row.Email || '').trim()) || null,
     })).filter((r: any) => r.student_id && r.name && r.merit_rank > 0);
 
     if (data.length === 0) {
@@ -154,12 +168,14 @@ export default function StudentsPage() {
         <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
           <h3 className="text-lg font-semibold mb-2">Import Students from CSV</h3>
           <p className="text-sm text-gray-500 mb-3">
-            Paste CSV data with headers: <code className="bg-gray-100 px-1 rounded">student_id,name,merit_rank,email,has_choice_privilege</code>
+            Paste CSV with headers{' '}
+            <code className="bg-gray-100 px-1 rounded">student_id,name,merit_rank,email</code>.
+            Choice privilege comes from Session Config (top-N merit ranks), not from this file.
           </p>
           <textarea
             value={importText}
             onChange={(e) => { setImportText(e.target.value); setImportError(''); }}
-            placeholder={"student_id,name,merit_rank,email,has_choice_privilege\n2026001,Ahmed Karim,1,ahmed@email.com,true\n2026002,Fatima Rahman,2,fatima@email.com,true"}
+            placeholder={'student_id,name,merit_rank,email\n2026001,Ahmed Karim,1,ahmed@email.com\n2026002,Fatima Rahman,2,fatima@email.com'}
             className="w-full h-40 px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
           />
           {importError && <p className="text-red-600 text-sm mt-2">{importError}</p>}
@@ -218,18 +234,10 @@ export default function StudentsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               />
             </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formData.has_choice_privilege}
-                  onChange={(e) => setFormData({ ...formData, has_choice_privilege: e.target.checked })}
-                  className="w-4 h-4"
-                />
-                <span className="text-sm font-medium text-gray-700">Has Choice Privilege</span>
-              </label>
-            </div>
           </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Choice privilege (top-N merit ranks) is set only via Session Config (Choice Threshold), not on this form.
+          </p>
           <div className="flex gap-2 mt-4">
             <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
               {editingId ? 'Update' : 'Create'}

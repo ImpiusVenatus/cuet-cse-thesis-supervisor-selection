@@ -1,13 +1,18 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { sessionApi, supervisorsApi, studentsApi, SessionConfig, Supervisor, Student } from '@/lib/api';
+import { batchesApi, sessionApi, supervisorsApi, studentsApi, Batch } from '@/lib/api';
 import { Users, UserCheck, GraduationCap, Settings } from 'lucide-react';
 
 export default function DashboardPage() {
   const { data: session, isLoading: sessionLoading } = useQuery({
     queryKey: ['session'],
-    queryFn: sessionApi.get,
+    queryFn: () => sessionApi.get(),
+  });
+
+  const { data: batches, isLoading: batchesLoading } = useQuery({
+    queryKey: ['batches'],
+    queryFn: batchesApi.list,
   });
 
   const { data: supervisors, isLoading: supLoading } = useQuery({
@@ -17,10 +22,10 @@ export default function DashboardPage() {
 
   const { data: students, isLoading: stuLoading } = useQuery({
     queryKey: ['students'],
-    queryFn: studentsApi.list,
+    queryFn: () => studentsApi.list(),
   });
 
-  const isLoading = sessionLoading || supLoading || stuLoading;
+  const isLoading = sessionLoading || batchesLoading || supLoading || stuLoading;
 
   if (isLoading) {
     return (
@@ -35,6 +40,9 @@ export default function DashboardPage() {
   const assignedStudents = students?.filter(s => s.supervisor_id !== null).length || 0;
   const unassignedStudents = students?.filter(s => s.supervisor_id === null).length || 0;
 
+  const workingBatchLabel =
+    (batches ?? []).find((b: Batch) => b.id === session?.batch_id)?.name ?? 'Unknown cohort';
+
   const phaseColors: Record<string, string> = {
     setup: 'bg-gray-100 text-gray-800',
     choice_phase: 'bg-blue-100 text-blue-800',
@@ -45,6 +53,14 @@ export default function DashboardPage() {
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
+
+      <p className="text-sm text-gray-600 mb-4">
+        Working cohort: <span className="font-medium text-gray-900">{workingBatchLabel}</span>
+        <span className="text-gray-400"> · </span>
+        <a href="/setup/batches" className="text-blue-600 hover:underline">
+          Manage batches
+        </a>
+      </p>
 
       {/* Session Status */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6">

@@ -11,7 +11,7 @@ export default function ResultsPage() {
 
   const { data: session } = useQuery({
     queryKey: ['session'],
-    queryFn: sessionApi.get,
+    queryFn: () => sessionApi.get(),
   });
 
   const { data: results, isLoading } = useQuery({

@@ -4,6 +4,27 @@
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+function formatFastApiDetail(detail: unknown): string {
+  if (detail == null) return '';
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (typeof item === 'object' && item !== null && 'msg' in item) {
+          const o = item as { loc?: unknown[]; msg: string };
+          const loc = Array.isArray(o.loc) ? o.loc.filter((x) => x !== 'body').join('.') : '';
+          return loc ? `${loc}: ${o.msg}` : o.msg;
+        }
+        return JSON.stringify(item);
+      })
+      .join('; ');
+  }
+  if (typeof detail === 'object' && detail !== null && 'msg' in detail) {
+    return String((detail as { msg: string }).msg);
+  }
+  return String(detail);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -14,8 +35,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `HTTP ${res.status}`);
+    const raw = await res.json().catch(() => null);
+    const detail =
+      raw && typeof raw === 'object' && raw !== null && 'detail' in raw
+        ? (raw as { detail: unknown }).detail
+        : null;
+    const message = formatFastApiDetail(detail) || res.statusText || `HTTP ${res.status}`;
+    throw new Error(message);
   }
 
   // Handle CSV response
@@ -27,6 +53,35 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   return res.json();
 }
+
+// ============ Batches ============
+
+export interface Batch {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+export const batchesApi = {
+  list: () => request<Batch[]>('/api/batches/'),
+  create: (name: string) =>
+    request<Batch>('/api/batches/', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  setCurrent: (batchId: number) =>
+    request<Batch>('/api/batches/current', {
+      method: 'PUT',
+      body: JSON.stringify({ batch_id: batchId }),
+    }),
+};
+
+export type StudentCreatePayload = {
+  student_id: string;
+  name: string;
+  merit_rank: number;
+  email?: string | null;
+};
 
 // ============ Supervisor API ============
 
@@ -67,6 +122,7 @@ export const supervisorsApi = {
 
 export interface Student {
   id: number;
+  batch_id: number;
   student_id: string;
   name: string;
   merit_rank: number;
@@ -81,19 +137,22 @@ export interface Student {
 }
 
 export const studentsApi = {
-  list: () => request<Student[]>('/api/students/'),
-  create: (data: Omit<Student, 'id' | 'has_forfeited' | 'forfeit_order' | 'supervisor_id' | 'supervisor_name' | 'assignment_type' | 'assignment_time'>) =>
+  list: (batchId?: number) =>
+    request<Student[]>(
+      batchId != null ? `/api/students/?batch_id=${batchId}` : '/api/students/'
+    ),
+  create: (data: StudentCreatePayload) =>
     request<Student>('/api/students/', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  import: (data: Omit<Student, 'id' | 'has_forfeited' | 'forfeit_order' | 'supervisor_id' | 'supervisor_name' | 'assignment_type' | 'assignment_time'>[]) =>
+  import: (data: StudentCreatePayload[]) =>
     request<{ created: number; errors: { student_id: string; error: string }[]; total_attempted: number }>('/api/students/import', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   get: (id: number) => request<Student>(`/api/students/${id}`),
-  update: (id: number, data: Partial<Student>) =>
+  update: (id: number, data: Partial<Pick<Student, 'name' | 'merit_rank' | 'email'>>) =>
     request<Student>(`/api/students/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -106,6 +165,7 @@ export const studentsApi = {
 
 export interface SessionConfig {
   id: number;
+  batch_id: number;
   total_students: number;
   choice_threshold: number;
   session_status: 'setup' | 'choice_phase' | 'lottery_phase' | 'completed';
@@ -116,7 +176,10 @@ export interface SessionConfig {
 }
 
 export const sessionApi = {
-  get: () => request<SessionConfig>('/api/session/'),
+  get: (batchId?: number) =>
+    request<SessionConfig>(
+      batchId != null ? `/api/session/?batch_id=${batchId}` : '/api/session/'
+    ),
   setup: (data: { total_students: number; choice_threshold: number }) =>
     request<SessionConfig>('/api/session/setup', {
       method: 'POST',
