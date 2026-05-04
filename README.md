@@ -69,7 +69,8 @@ Open a **new terminal** (keep the backend terminal available) and run:
 # Navigate to frontend directory
 cd frontend
 
-# Optional: copy frontend/.env.example to .env.local and set NEXT_PUBLIC_API_URL if the API is not on localhost:8000
+# The UI calls FastAPI from the browser using `NEXT_PUBLIC_API_URL` (default `http://localhost:8000` in `.env`).
+# Copy `.env.local.example` to `.env.local` only if your API host or port differs.
 
 # Install dependencies
 npm install
@@ -106,7 +107,7 @@ cd frontend
 npm run dev
 ```
 
-The web app will be available at **http://localhost:3000**.
+The web app will be available at **http://localhost:3000**. The browser issues API requests **directly to FastAPI** at **`NEXT_PUBLIC_API_URL`** (usually `http://localhost:8000`), which is allowed by backend CORS for `http://localhost:3000`.
 
 ---
 
