@@ -10,10 +10,23 @@ import sys
 # Add the parent directory to sys.path so we can import app
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from app.core.config import get_settings
 from app.db.database import Base
-from app.models.models import Supervisor, Student, SessionConfig, EventLog  # noqa: F401
+from app.models.models import (  # noqa: F401
+    Supervisor,
+    Student,
+    SessionConfig,
+    EventLog,
+    Batch,
+    SystemSettings,
+    SupervisorUsage,
+)
 
 config = context.config
+
+
+def _alembic_url() -> str:
+    return get_settings().sqlalchemy_database_url
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -23,7 +36,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = _alembic_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -37,8 +50,10 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    section = dict(config.get_section(config.config_ini_section, {}) or {})
+    section["sqlalchemy.url"] = _alembic_url()
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
