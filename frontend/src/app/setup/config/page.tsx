@@ -1,16 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { batchesApi, sessionApi } from '@/lib/api';
-import { Play, AlertTriangle } from 'lucide-react';
+import { allocationApi, batchesApi, sessionApi, supervisorsApi } from '@/lib/api';
+import { Play, AlertTriangle, Loader2, Sparkles } from 'lucide-react';
+
+async function warmChoiceCeremonyCache(qc: QueryClient) {
+  await Promise.all([
+    qc.fetchQuery({ queryKey: ['queue'], queryFn: allocationApi.getQueue }),
+    qc.fetchQuery({ queryKey: ['supervisors'], queryFn: () => supervisorsApi.list() }),
+    qc.fetchQuery({ queryKey: ['session'], queryFn: () => sessionApi.get() }),
+  ]);
+}
+
+type ChoiceStartModal = 'idle' | 'calling' | { countdown: number } | { error: string };
 
 export default function ConfigPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [totalStudents, setTotalStudents] = useState(100);
   const [choiceThreshold, setChoiceThreshold] = useState(20);
   const [resetPassword, setResetPassword] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [choiceStartModal, setChoiceStartModal] = useState<ChoiceStartModal>('idle');
 
   const { data: session, isLoading } = useQuery({
     queryKey: ['session'],
@@ -47,11 +61,55 @@ export default function ConfigPage() {
   const startChoiceMutation = useMutation({
     mutationFn: sessionApi.startChoice,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session'] });
-      alert('Choice phase started!');
+      void queryClient.invalidateQueries({ queryKey: ['session'] });
+      router.prefetch('/ceremony/choice');
+      setChoiceStartModal({ countdown: 10 });
+      void warmChoiceCeremonyCache(queryClient);
     },
-    onError: (err: Error) => alert(err.message),
+    onError: (err: Error) => {
+      setChoiceStartModal({ error: err.message });
+    },
   });
+
+  const choiceCountdownActive =
+    typeof choiceStartModal === 'object' &&
+    'countdown' in choiceStartModal &&
+    choiceStartModal.countdown > 0;
+
+  useEffect(() => {
+    if (!choiceCountdownActive) return;
+    void warmChoiceCeremonyCache(queryClient);
+    const id = window.setInterval(() => {
+      void warmChoiceCeremonyCache(queryClient);
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [choiceCountdownActive, queryClient]);
+
+  useEffect(() => {
+    if (typeof choiceStartModal !== 'object' || !('countdown' in choiceStartModal)) return;
+    if (choiceStartModal.countdown <= 0) {
+      setChoiceStartModal('idle');
+      router.push('/ceremony/choice');
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setChoiceStartModal((m) =>
+        typeof m === 'object' && 'countdown' in m ? { countdown: m.countdown - 1 } : m,
+      );
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, [choiceStartModal, router]);
+
+  const handleStartChoicePhase = () => {
+    router.prefetch('/ceremony/choice');
+    if (session?.session_status === 'choice_phase') {
+      void warmChoiceCeremonyCache(queryClient);
+      setChoiceStartModal({ countdown: 10 });
+      return;
+    }
+    setChoiceStartModal('calling');
+    startChoiceMutation.mutate();
+  };
 
   const startLotteryMutation = useMutation({
     mutationFn: sessionApi.startLottery,
@@ -227,15 +285,21 @@ export default function ConfigPage() {
             </p>
             <button
               type="button"
-              onClick={() => startChoiceMutation.mutate()}
+              onClick={handleStartChoicePhase}
               disabled={
                 startChoiceMutation.isPending ||
+                choiceStartModal !== 'idle' ||
                 !session ||
                 session.total_students < 1
               }
               className="text-white px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Play className="w-4 h-4 inline mr-1" /> Start Choice Phase
+              {startChoiceMutation.isPending && choiceStartModal === 'calling' ? (
+                <Loader2 className="w-4 h-4 inline mr-1 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4 inline mr-1" />
+              )}
+              Start Choice Phase
             </button>
             {session && session.total_students < 1 && (
               <p className="text-xs text-amber-600 mt-2">
@@ -304,6 +368,67 @@ export default function ConfigPage() {
           </div>
         )}
       </div>
+
+      {choiceStartModal !== 'idle' && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="choice-start-title"
+          aria-live="polite"
+        >
+          {typeof choiceStartModal === 'object' && 'error' in choiceStartModal ? (
+            <div className="relative max-w-md w-full rounded-2xl border border-red-400/40 bg-gradient-to-br from-slate-900 to-red-950 p-8 text-center shadow-2xl">
+              <AlertTriangle className="w-12 h-12 text-red-300 mx-auto mb-4" aria-hidden />
+              <h3 id="choice-start-title" className="text-xl font-bold text-white tracking-tight">
+                Could not start choice phase
+              </h3>
+              <p className="mt-4 text-sm text-red-100/90 leading-relaxed whitespace-pre-wrap">
+                {choiceStartModal.error}
+              </p>
+              <button
+                type="button"
+                onClick={() => setChoiceStartModal('idle')}
+                className="mt-8 w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 hover:bg-red-50"
+              >
+                Got it
+              </button>
+            </div>
+          ) : (
+            <div className="relative max-w-lg w-full overflow-hidden rounded-2xl border border-violet-300/40 bg-gradient-to-br from-violet-950 via-fuchsia-900 to-amber-900 p-8 text-center shadow-2xl shadow-violet-500/20">
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(250,204,21,0.25),transparent_50%),radial-gradient(circle_at_70%_80%,rgba(167,139,250,0.3),transparent_45%)]" />
+              <div className="relative">
+                <Sparkles className="w-12 h-12 text-amber-200 mx-auto mb-4" aria-hidden />
+                <h3 id="choice-start-title" className="text-2xl font-bold text-white tracking-tight">
+                  Choice phase is starting
+                </h3>
+                {choiceStartModal === 'calling' && (
+                  <p className="mt-4 text-violet-100 text-sm flex items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin text-amber-200" aria-hidden />
+                    Warming up the ceremony…
+                  </p>
+                )}
+                {typeof choiceStartModal === 'object' && 'countdown' in choiceStartModal && (
+                  <>
+                    <p className="mt-3 text-fuchsia-100/90 text-sm">
+                      Taking you to the choice screen in…
+                    </p>
+                    <div
+                      className="mt-6 text-7xl sm:text-8xl font-black tabular-nums text-transparent bg-clip-text bg-gradient-to-b from-amber-100 via-white to-amber-200 drop-shadow-lg"
+                      aria-live="assertive"
+                    >
+                      {choiceStartModal.countdown > 0 ? choiceStartModal.countdown : '—'}
+                    </div>
+                    <p className="mt-4 text-xs text-violet-200/80">
+                      Hold tight — merit order picks are about to begin.
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
