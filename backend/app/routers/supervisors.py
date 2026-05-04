@@ -5,25 +5,37 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.database import get_db
-from app.models.models import Supervisor
+from app.deps_batches import current_batch_id
+from app.models.models import Supervisor, SupervisorUsage, Student
 from app.schemas.schemas import (
     SupervisorCreate, SupervisorUpdate, SupervisorResponse
 )
-from app.engine import allocation_engine
 
 router = APIRouter(prefix="/api/supervisors", tags=["supervisors"])
 
 
 @router.get("/", response_model=List[SupervisorResponse])
-def list_supervisors(db: Session = Depends(get_db)):
-    """List all supervisors with slot counts."""
-    supervisors = db.query(Supervisor).all()
-    return supervisors
+def list_supervisors(
+    db: Session = Depends(get_db),
+    bid: int = Depends(current_batch_id),
+):
+    usages = {
+        u.supervisor_id: u
+        for u in db.query(SupervisorUsage).filter(SupervisorUsage.batch_id == bid).all()
+    }
+    supervisors = db.query(Supervisor).order_by(Supervisor.id).all()
+    result = []
+    for s in supervisors:
+        u = usages.get(s.id)
+        cf = u.choice_filled if u else 0
+        lf = u.lottery_filled if u else 0
+        resp = SupervisorResponse.model_validate(s)
+        result.append(resp.model_copy(update={"choice_filled": cf, "lottery_filled": lf}))
+    return result
 
 
 @router.post("/", response_model=SupervisorResponse)
 def create_supervisor(data: SupervisorCreate, db: Session = Depends(get_db)):
-    """Create a new supervisor."""
     supervisor = Supervisor(
         name=data.name,
         designation=data.designation.value,
@@ -39,17 +51,30 @@ def create_supervisor(data: SupervisorCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/{supervisor_id}", response_model=SupervisorResponse)
-def get_supervisor(supervisor_id: int, db: Session = Depends(get_db)):
-    """Get a single supervisor by ID."""
+def get_supervisor(
+    supervisor_id: int,
+    db: Session = Depends(get_db),
+    bid: int = Depends(current_batch_id),
+):
     supervisor = db.query(Supervisor).filter(Supervisor.id == supervisor_id).first()
     if not supervisor:
         raise HTTPException(status_code=404, detail="Supervisor not found")
-    return supervisor
+    u = (
+        db.query(SupervisorUsage)
+        .filter(
+            SupervisorUsage.batch_id == bid,
+            SupervisorUsage.supervisor_id == supervisor_id,
+        )
+        .first()
+    )
+    cf = u.choice_filled if u else 0
+    lf = u.lottery_filled if u else 0
+    resp = SupervisorResponse.model_validate(supervisor)
+    return resp.model_copy(update={"choice_filled": cf, "lottery_filled": lf})
 
 
 @router.put("/{supervisor_id}", response_model=SupervisorResponse)
 def update_supervisor(supervisor_id: int, data: SupervisorUpdate, db: Session = Depends(get_db)):
-    """Update a supervisor."""
     supervisor = db.query(Supervisor).filter(Supervisor.id == supervisor_id).first()
     if not supervisor:
         raise HTTPException(status_code=404, detail="Supervisor not found")
@@ -68,14 +93,11 @@ def update_supervisor(supervisor_id: int, data: SupervisorUpdate, db: Session = 
 
 @router.delete("/{supervisor_id}")
 def delete_supervisor(supervisor_id: int, db: Session = Depends(get_db)):
-    """Remove a supervisor (only if no students assigned)."""
     supervisor = db.query(Supervisor).filter(Supervisor.id == supervisor_id).first()
     if not supervisor:
         raise HTTPException(status_code=404, detail="Supervisor not found")
 
-    assigned_count = db.query(allocation_engine.Student).filter(
-        allocation_engine.Student.supervisor_id == supervisor_id
-    ).count()
+    assigned_count = db.query(Student).filter(Student.supervisor_id == supervisor_id).count()
 
     if assigned_count > 0:
         raise HTTPException(
@@ -89,8 +111,11 @@ def delete_supervisor(supervisor_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{supervisor_id}/availability", response_model=SupervisorResponse)
-def toggle_availability(supervisor_id: int, db: Session = Depends(get_db)):
-    """Toggle supervisor availability."""
+def toggle_availability(
+    supervisor_id: int,
+    db: Session = Depends(get_db),
+    bid: int = Depends(current_batch_id),
+):
     supervisor = db.query(Supervisor).filter(Supervisor.id == supervisor_id).first()
     if not supervisor:
         raise HTTPException(status_code=404, detail="Supervisor not found")
@@ -98,4 +123,15 @@ def toggle_availability(supervisor_id: int, db: Session = Depends(get_db)):
     supervisor.is_available = not supervisor.is_available
     db.commit()
     db.refresh(supervisor)
-    return supervisor
+    u = (
+        db.query(SupervisorUsage)
+        .filter(
+            SupervisorUsage.batch_id == bid,
+            SupervisorUsage.supervisor_id == supervisor_id,
+        )
+        .first()
+    )
+    cf = u.choice_filled if u else 0
+    lf = u.lottery_filled if u else 0
+    resp = SupervisorResponse.model_validate(supervisor)
+    return resp.model_copy(update={"choice_filled": cf, "lottery_filled": lf})

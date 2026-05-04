@@ -78,22 +78,24 @@ class StudentBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     merit_rank: int = Field(..., ge=1)
     email: Optional[str] = None
-    has_choice_privilege: bool = False
 
 
 class StudentCreate(StudentBase):
+    """Privilege is computed from session choice threshold — not supplied by client."""
+
     pass
 
 
 class StudentUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    has_choice_privilege: Optional[bool] = None
     merit_rank: Optional[int] = None
 
 
 class StudentResponse(StudentBase):
     id: int
+    batch_id: int
+    has_choice_privilege: bool
     has_forfeited: bool
     forfeit_order: Optional[int]
     supervisor_id: Optional[int]
@@ -110,7 +112,6 @@ class StudentImportItem(BaseModel):
     name: str
     merit_rank: int
     email: Optional[str] = None
-    has_choice_privilege: bool = False
 
 
 # ============ Session Config Schemas ============
@@ -130,11 +131,29 @@ class SessionSetup(BaseModel):
 
 class SessionConfigResponse(SessionConfigBase):
     id: int
+    batch_id: int
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class BatchCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class BatchResponse(BaseModel):
+    id: int
+    name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SetCurrentBatchRequest(BaseModel):
+    batch_id: int
 
 
 # ============ Allocation Schemas ============

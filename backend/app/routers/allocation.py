@@ -20,8 +20,8 @@ from app.engine.allocation_engine import (
     make_choice, forfeit_choice, skip_student,
     run_lottery_auto, undo_assignment,
     get_allocation_queue_state, get_assignment_results,
-    AllocationError, PhaseError, CapacityError, PrivilegeError
 )
+from app.engine.errors import AllocationError, PhaseError, CapacityError, PrivilegeError
 
 router = APIRouter(prefix="/api/allocation", tags=["allocation"])
 
@@ -53,7 +53,7 @@ def get_queue(db: Session = Depends(get_db)):
 def choose_supervisor(data: ChoiceRequest, db: Session = Depends(get_db)):
     """Student makes active choice."""
     try:
-        student, supervisor = make_choice(db, data.student_id, data.supervisor_id)
+        student, supervisor, usage = make_choice(db, data.student_id, data.supervisor_id)
 
         resp = StudentResponse.model_validate(student)
         resp.supervisor_name = supervisor.name
@@ -63,9 +63,9 @@ def choose_supervisor(data: ChoiceRequest, db: Session = Depends(get_db)):
             "supervisor": {
                 "id": supervisor.id,
                 "name": supervisor.name,
-                "choice_filled": supervisor.choice_filled,
+                "choice_filled": usage.choice_filled,
                 "choice_capacity": supervisor.choice_capacity,
-                "lottery_filled": supervisor.lottery_filled,
+                "lottery_filled": usage.lottery_filled,
                 "lottery_capacity": supervisor.lottery_capacity,
             }
         }
