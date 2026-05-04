@@ -16,6 +16,12 @@ from app.engine.batch_context import (
     get_or_create_usage,
     recompute_choice_privileges_for_batch,
 )
+from app.engine.capacity_rules import (
+    combined_used,
+    has_room_for_choice,
+    has_room_for_lottery,
+    uses_shared_single_seat,
+)
 from app.models.models import Student
 
 __all__ = [
@@ -111,16 +117,21 @@ def make_choice(
 
     usage = get_or_create_usage(db, bid, supervisor_id)
 
-    if usage.choice_filled >= supervisor.choice_capacity:
+    if not has_room_for_choice(supervisor, usage):
+        if uses_shared_single_seat(supervisor):
+            raise CapacityError(
+                f"Supervisor {supervisor.name} has no open seat "
+                f"(choice-filled {usage.choice_filled}, lottery-filled {usage.lottery_filled}; "
+                f"single seat fills in either phase)"
+            )
+        if usage.choice_filled >= supervisor.choice_capacity:
+            raise CapacityError(
+                f"Supervisor {supervisor.name} has filled all choice slots "
+                f"({usage.choice_filled}/{supervisor.choice_capacity})"
+            )
         raise CapacityError(
-            f"Supervisor {supervisor.name} has filled all choice slots "
-            f"({usage.choice_filled}/{supervisor.choice_capacity})"
-        )
-
-    if usage.choice_filled + usage.lottery_filled >= supervisor.total_capacity:
-        raise CapacityError(
-            f"Supervisor {supervisor.name} has reached total capacity "
-            f"({supervisor.total_capacity})"
+            f"Supervisor {supervisor.name} is at total capacity ({supervisor.total_capacity}) "
+            f"({combined_used(usage)} slots used)"
         )
 
     student.supervisor_id = supervisor_id
@@ -254,9 +265,7 @@ def run_lottery_auto(db: Session) -> List[Tuple[Student, Supervisor]]:
         for supervisor in supervisors:
             usage = get_or_create_usage(db, bid, supervisor.id)
 
-            if usage.lottery_filled >= supervisor.lottery_capacity:
-                continue
-            if usage.choice_filled + usage.lottery_filled >= supervisor.total_capacity:
+            if not has_room_for_lottery(supervisor, usage):
                 continue
 
             student.supervisor_id = supervisor.id

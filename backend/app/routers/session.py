@@ -11,7 +11,7 @@ from app.deps_batches import get_stored_current_batch_id
 from app.engine import allocation_engine
 from app.engine.allocation_engine import get_session_config_for_batch
 from app.engine.batch_context import recompute_choice_privileges_for_batch
-from app.models.models import Supervisor, SupervisorUsage
+from app.models.models import Student, Supervisor, SupervisorUsage
 from app.schemas.schemas import (
     SessionSetup, SessionConfigResponse, SessionStatus, EventType
 )

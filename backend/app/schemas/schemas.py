@@ -1,7 +1,31 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+
+
+def validate_supervisor_capacities(
+    *, total_capacity: int, choice_capacity: int, lottery_capacity: int
+) -> None:
+    """Arithmetic rules plus shared single-seat (total 1 + both quotas ≥ 1)."""
+    t, c, l = total_capacity, choice_capacity, lottery_capacity
+    if t == 0:
+        if c != 0 or l != 0:
+            raise ValueError(
+                "When total_capacity is 0, choice_capacity and lottery_capacity must be 0"
+            )
+        return
+    if c > t or l > t:
+        raise ValueError("choice_capacity and lottery_capacity cannot exceed total_capacity")
+
+    flexible_single = t == 1 and c >= 1 and l >= 1
+    if flexible_single:
+        return
+    if c + l > t:
+        raise ValueError(
+            "choice_capacity + lottery_capacity cannot exceed total_capacity "
+            "(use total 1 with choice ≥ 1 and lottery ≥ 1 for one student in either phase)"
+        )
 
 
 # ============ Enums ============
@@ -47,7 +71,14 @@ class SupervisorBase(BaseModel):
 
 
 class SupervisorCreate(SupervisorBase):
-    pass
+    @model_validator(mode="after")
+    def _capacities(self):
+        validate_supervisor_capacities(
+            total_capacity=self.total_capacity,
+            choice_capacity=self.choice_capacity,
+            lottery_capacity=self.lottery_capacity,
+        )
+        return self
 
 
 class SupervisorUpdate(BaseModel):

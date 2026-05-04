@@ -6,21 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.deps_batches import get_stored_current_batch_id
-from app.models.models import Batch, SessionConfig, SystemSettings
+from app.deps_batches import ensure_system_settings_row, get_stored_current_batch_id
+from app.models.models import Batch, SessionConfig
 from app.schemas.schemas import BatchCreate, BatchResponse, SetCurrentBatchRequest
 
 router = APIRouter(prefix="/api/batches", tags=["batches"])
-
-
-def _get_settings(db: Session) -> SystemSettings:
-    row = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
-    if not row:
-        raise HTTPException(
-            status_code=500,
-            detail="Database not initialized (missing system_settings). Run migrations.",
-        )
-    return row
 
 
 @router.get("/", response_model=List[BatchResponse])
@@ -35,7 +25,7 @@ def create_batch(data: BatchCreate, db: Session = Depends(get_db)):
     db.flush()
     db.refresh(batch)
     db.add(SessionConfig(batch_id=batch.id))
-    settings = _get_settings(db)
+    settings = ensure_system_settings_row(db)
     settings.current_batch_id = batch.id
     db.commit()
     db.refresh(batch)
@@ -58,7 +48,7 @@ def set_working_batch(body: SetCurrentBatchRequest, db: Session = Depends(get_db
                 "Complete/reset first.",
             )
 
-    settings = _get_settings(db)
+    settings = ensure_system_settings_row(db)
     settings.current_batch_id = body.batch_id
     db.commit()
     db.refresh(batch)

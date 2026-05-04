@@ -37,6 +37,10 @@ class Settings(BaseSettings):
 
     database_url: str | None = Field(default=None, description="Neon/other Postgres URL; unset = SQLite")
     environment: str = Field(default="development")
+    cors_origins_extra: str = Field(
+        default="",
+        description="Comma-separated extra browser origins allowed by CORS (in addition to local Next defaults)",
+    )
 
     @property
     def sqlalchemy_database_url(self) -> str:

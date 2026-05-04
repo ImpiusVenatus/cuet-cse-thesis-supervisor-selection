@@ -8,7 +8,10 @@ from app.db.database import get_db
 from app.deps_batches import current_batch_id
 from app.models.models import Supervisor, SupervisorUsage, Student
 from app.schemas.schemas import (
-    SupervisorCreate, SupervisorUpdate, SupervisorResponse
+    SupervisorCreate,
+    SupervisorUpdate,
+    SupervisorResponse,
+    validate_supervisor_capacities,
 )
 
 router = APIRouter(prefix="/api/supervisors", tags=["supervisors"])
@@ -80,6 +83,18 @@ def update_supervisor(supervisor_id: int, data: SupervisorUpdate, db: Session = 
         raise HTTPException(status_code=404, detail="Supervisor not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    merged_total = update_data.get("total_capacity", supervisor.total_capacity)
+    merged_choice = update_data.get("choice_capacity", supervisor.choice_capacity)
+    merged_lotto = update_data.get("lottery_capacity", supervisor.lottery_capacity)
+    try:
+        validate_supervisor_capacities(
+            total_capacity=merged_total,
+            choice_capacity=merged_choice,
+            lottery_capacity=merged_lotto,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     for field, value in update_data.items():
         if field == "designation" and value is not None:
             setattr(supervisor, field, value.value)

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import get_settings
 from app.db.migrate import run_migrations_to_head
 from app.routers import batches, supervisors, students, session, allocation
 from app.websocket.handler import websocket_endpoint
@@ -21,11 +22,32 @@ app = FastAPI(
     description="Real-time supervisor allocation system for thesis ceremonies",
     version="1.0.0",
     lifespan=lifespan,
+    # Avoid trailing-slash redirects (breaks POST + browser CORS on cross-origin callers).
+    redirect_slashes=False,
 )
+
+_settings = get_settings()
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://[::1]:3000",
+]
+for _chunk in (_settings.cors_origins_extra or "").split(","):
+    _o = _chunk.strip()
+    if _o and _o not in _cors_origins:
+        _cors_origins.append(_o)
+
+# In development, tolerate other host:port combos (LAN IP access to Next, alternate ports).
+_cors_regex = None
+if (_settings.environment or "").lower() in ("development", "dev"):
+    _cors_regex = (
+        r"https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})\:\d+$"
+    )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
