@@ -1,8 +1,36 @@
 /**
  * API client for communicating with the FastAPI backend.
+ *
+ * Browser calls go to this origin (port 8000 by default). Override with `NEXT_PUBLIC_API_URL`
+ * for another host, port, or HTTPS in production.
  */
+const DEFAULT_API_ORIGIN = 'http://localhost:8000';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+export function apiBase(): string {
+  const v = process.env.NEXT_PUBLIC_API_URL?.trim();
+  return (v || DEFAULT_API_ORIGIN).replace(/\/$/, '');
+}
+
+/** WebSocket base (no path); `/ws` is appended in `createWebSocket`. */
+function websocketOrigin(): string {
+  const b = apiBase();
+  if (b) {
+    return b.replace(/^http/, 'ws').replace(/^https/, 'wss');
+  }
+  const explicit = process.env.NEXT_PUBLIC_WS_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/?ws\/?$/i, '').replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const h = window.location.hostname;
+    const isLocal = h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+    const port = process.env.NEXT_PUBLIC_BACKEND_PORT?.trim() || '8000';
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = isLocal ? '127.0.0.1' : h;
+    return `${proto}//${host}:${port}`;
+  }
+  return 'ws://127.0.0.1:8000';
+}
 
 function formatFastApiDetail(detail: unknown): string {
   if (detail == null) return '';
@@ -26,8 +54,10 @@ function formatFastApiDetail(detail: unknown): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const prefix = apiBase();
+  const res = await fetch(`${prefix}${path}`, {
     ...options,
+    credentials: 'omit',
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -175,6 +205,9 @@ export interface SessionConfig {
   updated_at: string;
 }
 
+/** Coordinator reset password; must match `RESET_PASSWORD` in `backend/app/routers/session.py`. */
+export const SESSION_RESET_PASSWORD = 'reset2026';
+
 export const sessionApi = {
   get: (batchId?: number) =>
     request<SessionConfig>(
@@ -247,10 +280,8 @@ export const allocationApi = {
 // ============ WebSocket ============
 
 export function createWebSocket(onMessage: (data: any) => void): WebSocket | null {
-  const wsUrl = API_URL.replace('http', 'ws').replace('https', 'wss');
-
   try {
-    const ws = new WebSocket(`${wsUrl}/ws`);
+    const ws = new WebSocket(`${websocketOrigin()}/ws`);
 
     ws.onopen = () => {
       console.log('WebSocket connected');

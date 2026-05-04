@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { QueryProvider } from "@/components/providers";
+import { AppNav } from "@/components/AppNav";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,18 +40,7 @@ export default function RootLayout({
               </h1>
             </div>
           </header>
-          <nav className="bg-gray-50 border-b border-gray-200 px-6 py-2">
-            <div className="max-w-7xl mx-auto flex gap-4 text-sm">
-              <a href="/dashboard" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Dashboard</a>
-              <a href="/setup/supervisors" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Supervisors</a>
-              <a href="/setup/students" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Students</a>
-              <a href="/setup/batches" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Batches</a>
-              <a href="/setup/config" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Config</a>
-              <a href="/ceremony/choice" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Choice</a>
-              <a href="/ceremony/lottery" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Lottery</a>
-              <a href="/ceremony/results" className="text-gray-600 hover:text-gray-900 px-3 py-1 rounded">Results</a>
-            </div>
-          </nav>
+          <AppNav />
           <main className="flex-1">{children}</main>
         </QueryProvider>
       </body>
