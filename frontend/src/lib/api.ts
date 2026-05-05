@@ -249,6 +249,11 @@ export interface AssignmentResult {
   assignment_time: string;
 }
 
+export interface LotteryDeckState {
+  student: Student | null;
+  cards: number;
+}
+
 export const allocationApi = {
   getQueue: () => request<QueueState>('/api/allocation/queue'),
   choose: (studentId: number, supervisorId: number) =>
@@ -271,6 +276,9 @@ export const allocationApi = {
       method: 'POST',
       body: JSON.stringify({ mode }),
     }),
+  getLotteryDeck: () => request<LotteryDeckState>('/api/allocation/lottery/deck'),
+  pickLotteryCard: (studentId: number, cardNumber: number) =>
+    request(`/api/allocation/lottery/pick?student_id=${studentId}&card_number=${cardNumber}`, { method: 'POST' }),
   getResults: () => request<AssignmentResult[]>('/api/allocation/results'),
   exportCsv: () => request<string>('/api/allocation/export'),
   undo: (studentId: number) =>

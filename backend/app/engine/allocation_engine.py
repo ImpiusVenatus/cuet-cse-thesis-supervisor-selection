@@ -302,7 +302,8 @@ def run_lottery_auto(db: Session) -> List[Tuple[Student, Supervisor]]:
                 }
             )
 
-    session_config.session_status = SessionStatus.COMPLETED.value
+    # IMPORTANT: do not auto-complete the session here.
+    # The coordinator explicitly ends the ceremony via /api/session/complete.
     session_config.updated_at = datetime.utcnow()
     db.commit()
 
@@ -392,10 +393,16 @@ def get_allocation_queue_state(db: Session) -> dict:
             .all()
         )
 
-    elif session_config.session_status in [
-        SessionStatus.LOTTERY_PHASE.value,
-        SessionStatus.COMPLETED.value,
-    ]:
+    elif session_config.session_status == SessionStatus.LOTTERY_PHASE.value:
+        # Lottery is now step-based in the UI: one student picks a hidden card.
+        # The "current student" is the next student in the lottery queue.
+        full_queue = build_lottery_queue(db, bid)
+        current_student = full_queue[0] if full_queue else None
+        queue = full_queue[1:] if len(full_queue) > 1 else []
+        forfeited_students = [s for s in full_queue if s.has_forfeited]
+
+    elif session_config.session_status == SessionStatus.COMPLETED.value:
+        # Ceremony has ended explicitly; keep queue visible for review.
         queue = build_lottery_queue(db, bid)
         forfeited_students = [s for s in queue if s.has_forfeited]
 

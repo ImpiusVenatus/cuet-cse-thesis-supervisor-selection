@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { allocationApi, batchesApi, sessionApi, supervisorsApi } from '@/lib/api';
+import { allocationApi, batchesApi, sessionApi, SESSION_RESET_PASSWORD, supervisorsApi } from '@/lib/api';
 import { Play, AlertTriangle, Loader2, Sparkles } from 'lucide-react';
 
 async function warmChoiceCeremonyCache(qc: QueryClient) {
@@ -88,8 +88,13 @@ export default function ConfigPage() {
   useEffect(() => {
     if (typeof choiceStartModal !== 'object' || !('countdown' in choiceStartModal)) return;
     if (choiceStartModal.countdown <= 0) {
-      setChoiceStartModal('idle');
-      router.push('/ceremony/choice');
+      // Final warm-up before navigation so the Choice page renders immediately.
+      // We intentionally keep the overlay up until the cache is hydrated.
+      void (async () => {
+        await warmChoiceCeremonyCache(queryClient);
+        setChoiceStartModal('idle');
+        router.push('/ceremony/choice');
+      })();
       return;
     }
     const t = window.setTimeout(() => {
@@ -98,7 +103,7 @@ export default function ConfigPage() {
       );
     }, 1000);
     return () => window.clearTimeout(t);
-  }, [choiceStartModal, router]);
+  }, [choiceStartModal, router, queryClient]);
 
   const handleStartChoicePhase = () => {
     router.prefetch('/ceremony/choice');
@@ -139,6 +144,22 @@ export default function ConfigPage() {
       alert('Session reset successfully!');
       setShowResetConfirm(false);
       setResetPassword('');
+    },
+    onError: (err: Error) => alert(err.message),
+  });
+
+  /** Temporary: one-click reset (for design iteration / recovering from completed state). */
+  const devResetMutation = useMutation({
+    mutationFn: () => sessionApi.reset(SESSION_RESET_PASSWORD),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['supervisors'] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+      setShowResetConfirm(false);
+      setResetPassword('');
+      alert('Session reset successfully!');
     },
     onError: (err: Error) => alert(err.message),
   });
@@ -329,6 +350,22 @@ export default function ConfigPage() {
         <h3 className="text-lg font-semibold text-red-600 mb-4 flex items-center gap-2">
           <AlertTriangle className="w-5 h-5" /> Danger Zone
         </h3>
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-amber-950">
+              <span className="font-semibold">Temporary:</span> one-click reset (use this if the session already ended).
+            </p>
+            <button
+              type="button"
+              onClick={() => devResetMutation.mutate()}
+              disabled={devResetMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+            >
+              {devResetMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+              Reset now
+            </button>
+          </div>
+        </div>
         {!showResetConfirm ? (
           <button
             onClick={() => setShowResetConfirm(true)}

@@ -6,14 +6,23 @@ from typing import List
 from datetime import datetime
 import csv
 import io
+import random
 
 from fastapi.responses import StreamingResponse
 
 from app.db.database import get_db
 from app.models.models import Student, Supervisor
 from app.schemas.schemas import (
-    ChoiceRequest, ForfeitRequest, SkipRequest, LotteryRunRequest,
-    QueueState, StudentResponse, AssignmentResult
+    ChoiceRequest,
+    ForfeitRequest,
+    SkipRequest,
+    LotteryRunRequest,
+    QueueState,
+    StudentResponse,
+    AssignmentResult,
+    SessionStatus,
+    AssignmentType,
+    EventType,
 )
 from app.engine import allocation_engine
 from app.engine.allocation_engine import (
@@ -22,6 +31,8 @@ from app.engine.allocation_engine import (
     get_allocation_queue_state, get_assignment_results,
 )
 from app.engine.errors import AllocationError, PhaseError, CapacityError, PrivilegeError
+from app.engine.capacity_rules import has_room_for_lottery
+from app.engine.allocation_engine import get_or_create_usage, allocation_current_batch_id
 
 router = APIRouter(prefix="/api/allocation", tags=["allocation"])
 
@@ -125,6 +136,107 @@ def run_lottery(data: LotteryRunRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Step mode not yet implemented")
     except (AllocationError, PhaseError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/lottery/deck")
+def get_lottery_deck(db: Session = Depends(get_db)):
+    """
+    Step lottery UI support: return the current lottery student and
+    how many numbered cards should be shown (one per eligible supervisor).
+    """
+    state = get_allocation_queue_state(db)
+    if state["phase"] != SessionStatus.LOTTERY_PHASE.value:
+        raise HTTPException(status_code=400, detail=f"Not in lottery phase (current: {state['phase']})")
+
+    current = state["current_student"]
+    if current is None:
+        return {"student": None, "cards": 0}
+
+    bid = allocation_current_batch_id(db)
+    supervisors = db.query(Supervisor).filter(Supervisor.is_available == True).all()
+    eligible = []
+    for sup in supervisors:
+        usage = get_or_create_usage(db, bid, sup.id)
+        if has_room_for_lottery(sup, usage):
+            eligible.append(sup.id)
+
+    return {"student": StudentResponse.model_validate(current), "cards": len(eligible)}
+
+
+@router.post("/lottery/pick")
+def pick_lottery_card(student_id: int, card_number: int, db: Session = Depends(get_db)):
+    """
+    Step lottery UI support: user picks a numbered card (1..N).
+    The backend shuffles eligible supervisors for *this* pick and assigns the selected one.
+    """
+    state = get_allocation_queue_state(db)
+    if state["phase"] != SessionStatus.LOTTERY_PHASE.value:
+        raise HTTPException(status_code=400, detail=f"Not in lottery phase (current: {state['phase']})")
+
+    current = state["current_student"]
+    if current is None:
+        raise HTTPException(status_code=400, detail="No current student in lottery queue")
+    if current.id != student_id:
+        raise HTTPException(status_code=400, detail="Can only pick for the current lottery student")
+
+    # Re-load student row (ensure still unassigned).
+    bid = allocation_current_batch_id(db)
+    student = db.query(Student).filter(Student.id == student_id, Student.batch_id == bid).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    if student.supervisor_id is not None:
+        raise HTTPException(status_code=400, detail="Student is already assigned")
+
+    supervisors = db.query(Supervisor).filter(Supervisor.is_available == True).all()
+    eligible: List[Supervisor] = []
+    for sup in supervisors:
+        usage = get_or_create_usage(db, bid, sup.id)
+        if has_room_for_lottery(sup, usage):
+            eligible.append(sup)
+
+    if not eligible:
+        raise HTTPException(status_code=400, detail="No supervisors have lottery capacity remaining")
+
+    if card_number < 1 or card_number > len(eligible):
+        raise HTTPException(status_code=400, detail=f"Card number must be 1..{len(eligible)}")
+
+    # Shuffle per pick; the mapping is intentionally hidden and changes each turn.
+    random.SystemRandom().shuffle(eligible)
+    supervisor = eligible[card_number - 1]
+    usage = get_or_create_usage(db, bid, supervisor.id)
+    if not has_room_for_lottery(supervisor, usage):
+        raise HTTPException(status_code=409, detail="That card became unavailable; pick again")
+
+    student.supervisor_id = supervisor.id
+    student.assignment_type = AssignmentType.LOTTERY.value
+    student.assignment_time = datetime.utcnow()
+    usage.lottery_filled += 1
+
+    allocation_engine.log_event(
+        db,
+        EventType.LOTTERY_ASSIGNED,
+        student_id=student.id,
+        supervisor_id=supervisor.id,
+        metadata={
+            "student_name": student.name,
+            "supervisor_name": supervisor.name,
+            "merit_rank": student.merit_rank,
+            "was_forfeited": student.has_forfeited,
+            "card_number": card_number,
+        },
+    )
+
+    db.commit()
+    db.refresh(student)
+    db.refresh(supervisor)
+
+    resp = StudentResponse.model_validate(student)
+    resp.supervisor_name = supervisor.name
+    return {
+        "message": "Lottery assignment successful",
+        "student": resp,
+        "supervisor": {"id": supervisor.id, "name": supervisor.name},
+    }
 
 
 @router.get("/results")

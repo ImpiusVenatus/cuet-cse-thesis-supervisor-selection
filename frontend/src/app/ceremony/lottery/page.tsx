@@ -11,14 +11,18 @@ import {
   SESSION_RESET_PASSWORD,
 } from '@/lib/api';
 import { remainingLotterySlotsDisplay, usesSharedSingleSeat } from '@/lib/supervisorCapacity';
-import { Play, CheckCircle, AlertCircle, Loader2, Wrench } from 'lucide-react';
+import { AlertCircle, CheckCircle, Loader2, Wrench } from 'lucide-react';
 
 export default function LotteryPage() {
   const queryClient = useQueryClient();
-  const [lotteryResults, setLotteryResults] = useState<any[]>([]);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [revealModal, setRevealModal] = useState<{
+    studentName: string;
+    supervisorName: string;
+    cardNumber: number;
+  } | null>(null);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
 
-  const { data: queue, isLoading: queueLoading } = useQuery({
+  const { data: queue, isPending: queuePending } = useQuery({
     queryKey: ['queue'],
     queryFn: allocationApi.getQueue,
     refetchInterval: 3000,
@@ -30,22 +34,11 @@ export default function LotteryPage() {
     refetchInterval: 3000,
   });
 
-  const runLotteryMutation = useMutation({
-    mutationFn: allocationApi.runLottery,
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['queue'] });
-      queryClient.invalidateQueries({ queryKey: ['supervisors'] });
-      queryClient.invalidateQueries({ queryKey: ['students'] });
-      queryClient.invalidateQueries({ queryKey: ['session'] });
-      setLotteryResults(data.assignments || []);
-      setShowConfirm(false);
-    },
-    onError: (err: Error) => alert(err.message),
+  const { data: deck, isPending: deckPending } = useQuery({
+    queryKey: ['lotteryDeck'],
+    queryFn: allocationApi.getLotteryDeck,
+    refetchInterval: 2500,
   });
-
-  const handleRunLottery = () => {
-    runLotteryMutation.mutate('auto');
-  };
 
   /** Temporary: full batch reset to setup only — same behavior as Choice page tool. */
   const devResetSessionMutation = useMutation({
@@ -55,14 +48,48 @@ export default function LotteryPage() {
       queryClient.invalidateQueries({ queryKey: ['queue'] });
       queryClient.invalidateQueries({ queryKey: ['students'] });
       queryClient.invalidateQueries({ queryKey: ['supervisors'] });
-      setLotteryResults([]);
-      setShowConfirm(false);
+      queryClient.invalidateQueries({ queryKey: ['lotteryDeck'] });
+      setRevealModal(null);
+      setEndConfirmOpen(false);
     },
     onError: (err: Error) => alert(err.message),
   });
 
-  if (queueLoading) {
-    return <div className="flex justify-center h-64 items-center text-gray-500">Loading...</div>;
+  const pickMutation = useMutation({
+    mutationFn: ({ studentId, cardNumber }: { studentId: number; cardNumber: number }) =>
+      allocationApi.pickLotteryCard(studentId, cardNumber),
+    onSuccess: (data: any, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+      queryClient.invalidateQueries({ queryKey: ['supervisors'] });
+      queryClient.invalidateQueries({ queryKey: ['students'] });
+      queryClient.invalidateQueries({ queryKey: ['lotteryDeck'] });
+      setRevealModal({
+        studentName: data.student?.name ?? 'Student',
+        supervisorName: data.supervisor?.name ?? 'Supervisor',
+        cardNumber: vars.cardNumber,
+      });
+    },
+    onError: (err: Error) => alert(err.message),
+  });
+
+  const endSessionMutation = useMutation({
+    mutationFn: sessionApi.complete,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+      setEndConfirmOpen(false);
+    },
+    onError: (err: Error) => alert(err.message),
+  });
+
+  const waiting = (queuePending && queue === undefined) || (deckPending && deck === undefined);
+  if (waiting) {
+    return (
+      <div className="flex h-[100dvh] flex-col items-center justify-center gap-3 text-gray-500">
+        <Loader2 className="h-10 w-10 animate-spin text-blue-600" aria-hidden />
+        <p>Loading lottery…</p>
+      </div>
+    );
   }
 
   if (queue?.phase !== 'lottery_phase') {
@@ -79,11 +106,11 @@ export default function LotteryPage() {
     );
   }
 
-  const queueStudents = queue?.queue || [];
-  const forfeitedStudents = queue?.forfeited_students || [];
+  const currentStudent = queue?.current_student as Student | null | undefined;
+  const cards = deck?.cards ?? 0;
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
+    <div className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden px-4 py-3">
       <div className="mb-4 rounded-xl border border-amber-300/80 bg-amber-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-2 text-sm text-amber-950">
           <Wrench className="w-5 h-5 shrink-0 text-amber-700 mt-0.5" aria-hidden />
@@ -95,7 +122,7 @@ export default function LotteryPage() {
         </div>
         <button
           type="button"
-          disabled={devResetSessionMutation.isPending || runLotteryMutation.isPending}
+          disabled={devResetSessionMutation.isPending || pickMutation.isPending || endSessionMutation.isPending}
           onClick={() => devResetSessionMutation.mutate()}
           className="inline-flex items-center gap-2 shrink-0 rounded-lg bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed"
         >
@@ -106,160 +133,179 @@ export default function LotteryPage() {
         </button>
       </div>
 
-      <h2 className="text-2xl font-bold mb-4">Lottery Phase</h2>
+      <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <h2 className="text-xl font-bold text-gray-900">Lottery Phase</h2>
+        <button
+          type="button"
+          onClick={() => setEndConfirmOpen(true)}
+          disabled={endSessionMutation.isPending || devResetSessionMutation.isPending}
+          className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+        >
+          End session
+        </button>
+      </div>
 
-      {/* Run Lottery Button */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">Ready to Run Lottery</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              {queueStudents.length} students will be assigned to available supervisors
-            </p>
-          </div>
-          <button
-            onClick={() => setShowConfirm(true)}
-            disabled={runLotteryMutation.isPending || queueStudents.length === 0}
-            className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 disabled:opacity-50"
+      {endConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => !endSessionMutation.isPending && setEndConfirmOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="end-session-title"
+            className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
           >
-            <Play className="w-5 h-5" /> Run Lottery
-          </button>
-        </div>
-      </div>
-
-      {/* Lottery Queue */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Forfeited Students (Priority) */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4 text-red-600">
-            Forfeited Students (Priority Queue)
-          </h3>
-          {forfeitedStudents.length > 0 ? (
-            <div className="space-y-2">
-              {forfeitedStudents.map((student: Student) => (
-                <div key={student.id} className="flex items-center gap-3 p-3 bg-red-50 rounded-lg">
-                  <span className="w-8 h-8 bg-red-200 rounded-full flex items-center justify-center text-sm font-mono text-red-800">
-                    {student.forfeit_order}
-                  </span>
-                  <div>
-                    <div className="font-medium">{student.name}</div>
-                    <div className="text-sm text-gray-500">Rank #{student.merit_rank}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-center py-4">No forfeited students</p>
-          )}
-        </div>
-
-        {/* Regular Queue */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Remaining Students</h3>
-          {queueStudents.length > 0 ? (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {queueStudents.map((student: Student) => (
-                <div key={student.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <span className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-sm font-mono">
-                    {student.merit_rank}
-                  </span>
-                  <div>
-                    <div className="font-medium">{student.name}</div>
-                    <div className="text-sm text-gray-500">Rank #{student.merit_rank}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-500 text-center py-4">No remaining students</p>
-          )}
-        </div>
-      </div>
-
-      {/* Supervisor Availability */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-4">Supervisor Lottery Availability</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {supervisors?.filter((s) => s.is_available).map((sup: Supervisor) => {
-            const lotteryRemaining = remainingLotterySlotsDisplay(sup);
-            return (
-              <div key={sup.id} className="p-3 border border-gray-200 rounded-lg">
-                <div className="font-medium">{sup.name}</div>
-                <div className="text-sm text-gray-500">{sup.designation}</div>
-                <div className="mt-2">
-                  <span className={`text-sm font-medium ${lotteryRemaining > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {lotteryRemaining} open slot{lotteryRemaining !== 1 ? 's' : ''} for lottery
-                  </span>
-                </div>
-                <div className="text-xs text-gray-400 mt-1">
-                  Choice: {sup.choice_filled}/{sup.choice_capacity} | Lottery: {sup.lottery_filled}/
-                  {sup.lottery_capacity}
-                  {usesSharedSingleSeat(sup) && (
-                    <span className="block text-blue-700 mt-0.5">Shared single seat (fills in either phase)</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Lottery Results */}
-      {lotteryResults.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6 mt-6">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-green-600" />
-            Lottery Results ({lotteryResults.length} assignments)
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Student</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Rank</th>
-                  <th className="text-left px-4 py-3 text-sm font-medium text-gray-700">Supervisor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lotteryResults.map((result: any) => (
-                  <tr key={result.student_id} className="border-t border-gray-100">
-                    <td className="px-4 py-3 font-medium">{result.student_name}</td>
-                    <td className="px-4 py-3 font-mono">{result.merit_rank}</td>
-                    <td className="px-4 py-3">{result.supervisor_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-bold mb-3">Confirm Lottery Run</h3>
-            <p className="text-gray-600 mb-4">
-              This will automatically assign {queueStudents.length} students to available supervisors
-              based on the lottery queue order. This action cannot be easily undone.
+            <h3 id="end-session-title" className="text-lg font-semibold text-gray-900">
+              End the ceremony session?
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">
+              This will mark the session as completed. Any currently unassigned students will remain unassigned until you
+              reset/restart.
             </p>
-            <div className="flex gap-2">
+            <div className="mt-6 grid grid-cols-2 gap-2">
               <button
-                onClick={handleRunLottery}
-                className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
-              >
-                Yes, Run Lottery
-              </button>
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+                type="button"
+                onClick={() => setEndConfirmOpen(false)}
+                disabled={endSessionMutation.isPending}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Cancel
               </button>
+              <button
+                type="button"
+                onClick={() => endSessionMutation.mutate()}
+                disabled={endSessionMutation.isPending}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+              >
+                {endSessionMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+                End session
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {revealModal && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => setRevealModal(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reveal-title"
+            className="w-full max-w-md rounded-xl border border-green-200 bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-100">
+                <CheckCircle className="h-8 w-8 text-green-600" aria-hidden />
+              </div>
+              <h3 id="reveal-title" className="mt-4 text-xl font-semibold text-gray-900">
+                Card {revealModal.cardNumber} revealed
+              </h3>
+              <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                <span className="font-semibold text-gray-900">{revealModal.studentName}</span>
+                {' '}is assigned to{' '}
+                <span className="font-semibold text-gray-900">{revealModal.supervisorName}</span>.
+              </p>
+              <button
+                type="button"
+                onClick={() => setRevealModal(null)}
+                className="mt-6 w-full rounded-lg bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <div className="flex min-h-0 flex-col gap-2">
+          {currentStudent ? (
+            <>
+              <div className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-base font-bold text-indigo-700">
+                    {currentStudent.merit_rank}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-bold text-gray-900">{currentStudent.name}</h3>
+                    <p className="truncate font-mono text-xs text-gray-500">{currentStudent.student_id}</p>
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] leading-snug text-gray-500">
+                  Pick a numbered card. It will reveal a supervisor and immediately assign them.
+                </p>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white p-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-600">Cards</span>
+                  <span className="text-xs text-gray-500 tabular-nums">{cards}</span>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="grid min-h-full w-full grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-3 auto-rows-[minmax(6.5rem,1fr)] content-stretch">
+                    {Array.from({ length: cards }, (_, i) => i + 1).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        disabled={pickMutation.isPending || Boolean(revealModal)}
+                        onClick={() => pickMutation.mutate({ studentId: currentStudent.id, cardNumber: n })}
+                        className="flex h-full min-h-[6.5rem] flex-col items-center justify-center rounded-xl border border-gray-200 bg-gradient-to-b from-slate-50 to-white text-center shadow-sm transition hover:border-indigo-300 hover:shadow disabled:opacity-60"
+                      >
+                        <span className="text-xs font-medium text-gray-500">Card</span>
+                        <span className="mt-1 text-4xl font-black text-indigo-700 tabular-nums">{n}</span>
+                      </button>
+                    ))}
+                    {cards === 0 && (
+                      <div className="col-span-full rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-gray-600">
+                        No supervisors have lottery capacity remaining.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50/60 p-6 text-center">
+              <h3 className="text-lg font-semibold text-gray-600">No current student</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                {queue?.queue && queue.queue.length > 0 ? 'Preparing next student…' : 'All students have been processed.'}
+              </p>
+            </div>
+          )}
+        </div>
+
+      {/* Supervisor Availability */}
+        <aside className="flex min-h-0 flex-col rounded-lg border border-gray-200 bg-white p-2">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Capacity snapshot</h3>
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
+            {supervisors?.filter((s) => s.is_available).map((sup: Supervisor) => {
+              const remaining = remainingLotterySlotsDisplay(sup);
+              return (
+                <div key={sup.id} className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-medium text-gray-900">{sup.name}</span>
+                    <span className={`shrink-0 text-xs font-bold tabular-nums ${remaining > 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {remaining}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-gray-500 truncate">{sup.designation}</div>
+                  {usesSharedSingleSeat(sup) && (
+                    <div className="mt-0.5 text-[10px] text-blue-700">Shared single seat</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
